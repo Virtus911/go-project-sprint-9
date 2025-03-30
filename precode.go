@@ -16,7 +16,7 @@ import (
 func Generator(ctx context.Context, ch chan<- int64, fn func(int64)) {
 	// 1. Функция Generator
 	// ...
-	n := int64(1)
+	var n int64 = 1
 	for {
 		select {
 		case <-ctx.Done():
@@ -30,20 +30,17 @@ func Generator(ctx context.Context, ch chan<- int64, fn func(int64)) {
 }
 
 // Worker читает число из канала in и пишет его в канал out.
-func Worker(in <-chan int64, out chan<- int64, wg *sync.WaitGroup) {
+func Worker(in <-chan int64, out chan<- int64) {
 	// 2. Функция Worker
 	// ...
-	defer wg.Done()
 
 	for num := range in {
-		select {
-		case out <- num:
-			time.Sleep(time.Millisecond * 1)
-		default:
-			return
-		}
+		out <- num
+		time.Sleep(time.Millisecond * 1)
 	}
+	close(out)
 }
+
 func main() {
 	chIn := make(chan int64)
 
@@ -65,13 +62,12 @@ func main() {
 	const NumOut = 5 // количество обрабатывающих горутин и каналов
 	// outs — слайс каналов, куда будут записываться числа из chIn
 	outs := make([]chan int64, NumOut)
-	var workersWg sync.WaitGroup
 
 	for i := 0; i < NumOut; i++ {
 		// создаём каналы и для каждого из них вызываем горутину Worker
 		outs[i] = make(chan int64)
-		workersWg.Add(1)
-		go Worker(chIn, outs[i], &workersWg)
+
+		go Worker(chIn, outs[i])
 	}
 
 	// amounts — слайс, в который собирается статистика по горутинам
@@ -79,25 +75,25 @@ func main() {
 	// chOut — канал, в который будут отправляться числа из горутин `outs[i]`
 	chOut := make(chan int64, NumOut)
 
-	var collectorsWg sync.WaitGroup
-	collectorsWg.Add(NumOut)
+	var wg sync.WaitGroup
 
 	// 4. Собираем числа из каналов outs
 	// ...
 	for i := 0; i < NumOut; i++ {
+		wg.Add(1)
+		go func(out <-chan int64, i int64) {
 
-		go func(idx int, out <-chan int64) {
-			defer collectorsWg.Done()
 			for num := range out {
-				atomic.AddInt64(&amounts[idx], 1)
+				amounts[i]++
 				chOut <- num
 			}
-		}(i, outs[i])
+			wg.Done()
+		}(outs[i], int64(i))
 	}
 
 	go func() {
 		// ждём завершения работы всех горутин для outs
-		workersWg.Wait()
+		wg.Wait()
 		// закрываем результирующий канал
 		close(chOut)
 	}()
